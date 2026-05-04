@@ -24,18 +24,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.taldea5.ui.theme.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.graphics.BitmapFactory
+import java.net.URL
 import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import retrofit2.Response
 
 private data class LocalInfo(
     val short: String, 
@@ -494,6 +500,21 @@ private fun nowIso(): String {
     return sdf.format(Date())
 }
 
+private fun eskaeraErrorMessage(response: Response<*>): String {
+    val raw = response.errorBody()?.string()?.trim().orEmpty()
+    val body = raw.trim('"')
+
+    return when {
+        body.startsWith("Stock nahikorik ez:", ignoreCase = true) -> {
+            val produktua = body.substringAfter(":").trim()
+            if (produktua.isBlank()) "Ez dago stock nahikorik produktu honetarako."
+            else "Ez dago stock nahikorik: $produktua"
+        }
+        body.isNotBlank() -> body
+        else -> "Errorea eskaera bidaltzean: ${response.code()}"
+    }
+}
+
 private fun mmss(ms: Long): String {
     val sec = (ms / 1000).toInt()
     val m = sec / 60
@@ -597,12 +618,17 @@ fun MenuScreen(
         }
     }
 
-    fun committedQtyOf(id: Int) = accumulatedOrders.count { it.produktuaId == id }
-    fun draftQtyOf(id: Int) = cart[id] ?: 0
-    fun qtyOf(id: Int) = draftQtyOf(id) + committedQtyOf(id)
+    fun sameMenuItem(line: EskaeraLineRequest, item: MenuItem): Boolean {
+        return line.produktuaId == item.id && line.isPlatera == item.isPlatera
+    }
+
+    fun menuItemByCartId(cartId: Int) = menu.firstOrNull { it.cartId == cartId }
+    fun committedQtyOf(item: MenuItem) = accumulatedOrders.count { sameMenuItem(it, item) }
+    fun draftQtyOf(item: MenuItem) = cart[item.cartId] ?: 0
+    fun qtyOf(item: MenuItem) = draftQtyOf(item) + committedQtyOf(item)
     fun draftQty() = cart.values.sum()
     fun draftPlaterakQty() = cart.entries.sumOf { (id, qty) ->
-        if (menu.firstOrNull { it.id == id }?.isPlatera == true) qty else 0
+        if (menuItemByCartId(id)?.isPlatera == true) qty else 0
     }
 
     var section by remember { mutableStateOf(MenuSection.Platerak) }
@@ -614,9 +640,11 @@ fun MenuScreen(
     var orderMsg by remember { mutableStateOf<String?>(null) }
     var showPaymentDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        loading = true
-        error = null
+    suspend fun loadMenu(showLoading: Boolean) {
+        if (showLoading) {
+            loading = true
+            error = null
+        }
         try {
             val resProd = RetrofitClient.api.getProduktuak()
             val resPlat = RetrofitClient.api.getPlaterak()
@@ -627,8 +655,12 @@ fun MenuScreen(
 
                 fun sectionOfProd(typeId: Int): MenuSection? = when (typeId) {
                     6 -> MenuSection.Edariak
-                    14 -> MenuSection.Postreak
                     else -> null
+                }
+
+                fun sectionOfPlatera(mota: String?): MenuSection {
+                    val normalized = normalizeName(mota ?: "")
+                    return if (normalized.contains("postre")) MenuSection.Postreak else MenuSection.Platerak
                 }
 
                 val menuList = mutableListOf<MenuItem>()
@@ -657,6 +689,7 @@ fun MenuScreen(
 
                     menuList.add(MenuItem(
                         id = p.id,
+                        cartId = p.id,
                         name = name,
                         price = (p.prezioa?.toDouble() ?: -1.0),
                         stock = (p.stock ?: 0),
@@ -664,13 +697,14 @@ fun MenuScreen(
                         shortInfo = li?.short ?: "",
                         ingredientsText = li?.ingredients ?: "",
                         imageRes = li?.imageRes ?: R.drawable.shusinelli,
+                        imageUrl = normalizeImageUrl(p.irudiaPath),
                         isPlatera = false
                     ))
                 }
 
                 // 2. Cargamos los platos desde Platerak
                 platDto.forEach { p ->
-                    val sec = MenuSection.Platerak
+                    val sec = sectionOfPlatera(p.mota)
                     val name = p.izena ?: "Izenik gabe"
                     val normName = normalizeName(name)
                     var li = infoMap[normName]
@@ -691,28 +725,49 @@ fun MenuScreen(
                     }
 
                     val ingredientsStr = p.osagaiak?.mapNotNull { it.izena }?.joinToString(", ") ?: li?.ingredients ?: ""
+                    val availableStock = p.osagaiak
+                        ?.mapNotNull { it.stock }
+                        ?.minOrNull()
+                        ?.coerceAtLeast(0)
+                        ?: 0
 
                     menuList.add(MenuItem(
                         id = p.id,
+                        cartId = -p.id,
                         name = name,
                         price = (p.prezioa?.toDouble() ?: -1.0),
-                        stock = 99, // Platerak no tienen stock directo en esta vista
+                        stock = availableStock,
                         section = sec,
                         shortInfo = li?.short ?: p.mota ?: "",
                         ingredientsText = ingredientsStr,
                         imageRes = li?.imageRes ?: R.drawable.shusinelli,
+                        imageUrl = normalizeImageUrl(p.argazkiaUrl),
                         isPlatera = true
                     ))
                 }
 
                 menu = menuList.sortedBy { it.name }
             } else {
-                error = "Errorea datuak kargatzean"
+                if (showLoading) error = "Errorea datuak kargatzean"
             }
         } catch (e: Exception) {
-            error = "Errorea: ${e.message}"
+            if (showLoading) error = "Errorea: ${e.message}"
         } finally {
-            loading = false
+            if (showLoading) loading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        loadMenu(showLoading = true)
+        while (true) {
+            delay(3000)
+            loadMenu(showLoading = false)
+        }
+    }
+
+    LaunchedEffect(menu, selectedItem?.cartId) {
+        selectedItem = selectedItem?.let { selected ->
+            menu.firstOrNull { it.cartId == selected.cartId }
         }
     }
 
@@ -722,15 +777,15 @@ fun MenuScreen(
             if (draftPlaterakQty() >= remainingQuota()) return
         }
 
-        val current = qtyOf(item.id)
+        val current = draftQtyOf(item)
         if (current >= item.stock) return
-        cart[item.id] = draftQtyOf(item.id) + 1
+        cart[item.cartId] = draftQtyOf(item) + 1
     }
 
     fun dec(item: MenuItem) {
-        val draftQty = draftQtyOf(item.id)
+        val draftQty = draftQtyOf(item)
         if (draftQty > 0) {
-            if (draftQty == 1) cart.remove(item.id) else cart[item.id] = draftQty - 1
+            if (draftQty == 1) cart.remove(item.cartId) else cart[item.cartId] = draftQty - 1
         }
     }
 
@@ -765,11 +820,11 @@ fun MenuScreen(
         val orderedPlaterakNowQty = draftPlaterakQty()
 
         try {
-            val lines = cart.entries.flatMap { (id, qty) ->
-                val item = menu.firstOrNull { it.id == id }
+            val lines = cart.entries.flatMap { (cartId, qty) ->
+                val item = menuItemByCartId(cartId)
                 List(qty) { _ ->
                     EskaeraLineRequest(
-                        produktuaId = id,
+                        produktuaId = item?.id ?: cartId,
                         izena = item?.name,
                         prezioa = item?.price?.let { if (it < 0) null else it },
                         data = nowIso(),
@@ -790,14 +845,14 @@ fun MenuScreen(
 
             val res = RetrofitClient.api.createZerbitzua(body = req)
             if (!res.isSuccessful) {
-                orderMsg = "Errorea eskaera bidaltzean: ${res.code()}"
+                orderMsg = eskaeraErrorMessage(res)
                 ordering = false
                 return
             }
 
             val requestedMap = cart.toMap()
             menu = menu.map { m ->
-                val take = requestedMap[m.id] ?: 0
+                val take = requestedMap[m.cartId] ?: 0
                 if (take <= 0) m else m.copy(stock = (m.stock - take).coerceAtLeast(0))
             }
 
@@ -840,11 +895,11 @@ fun MenuScreen(
             var zerbitzuaId: Int? = null
 
             // Si hay algo en el carrito sin enviar, lo enviamos primero
-            val currentLines = cart.entries.flatMap { (id, qty) ->
-                val item = menu.firstOrNull { it.id == id }
+            val currentLines = cart.entries.flatMap { (cartId, qty) ->
+                val item = menuItemByCartId(cartId)
                 List(qty) { _ ->
                     EskaeraLineRequest(
-                        produktuaId = id,
+                        produktuaId = item?.id ?: cartId,
                         izena = item?.name,
                         prezioa = item?.price?.let { if (it < 0) null else it },
                         data = nowIso(),
@@ -867,7 +922,7 @@ fun MenuScreen(
                 if (res.isSuccessful) {
                     zerbitzuaId = res.body()?.id
                 } else {
-                    orderMsg = "Errorea ordainketa (eskaerak bidaltzean): ${res.code()}"
+                    orderMsg = eskaeraErrorMessage(res)
                     ordering = false
                     return
                 }
@@ -1027,9 +1082,9 @@ fun MenuScreen(
                     accumulated = accumulatedOrders, 
                     modifier = Modifier.fillMaxWidth(),
                     onCancel = { item ->
-                        val draftQty = cart[item.id] ?: 0
+                        val draftQty = cart[item.cartId] ?: 0
                         if (draftQty > 0) {
-                            if (draftQty == 1) cart.remove(item.id) else cart[item.id] = draftQty - 1
+                            if (draftQty == 1) cart.remove(item.cartId) else cart[item.cartId] = draftQty - 1
                         }
                     }
                 )
@@ -1135,8 +1190,9 @@ fun MenuScreen(
                                     items(itemsList) { item ->
                                         MenuCard(
                                             item = item,
-                                            qty = qtyOf(item.id),
-                                            canRemove = draftQtyOf(item.id) > 0,
+                                            qty = qtyOf(item),
+                                            draftQty = draftQtyOf(item),
+                                            canRemove = draftQtyOf(item) > 0,
                                             canAddMore = if (item.isPlatera) (!isCooldownActive() && draftPlaterakQty() < remainingQuota()) else true,
                                             onPlus = { inc(item) },
                                             onMinus = { dec(item) },
@@ -1158,8 +1214,9 @@ fun MenuScreen(
                                 items(shown.sortedBy { it.name }) { item ->
                                     MenuCard(
                                         item = item,
-                                        qty = qtyOf(item.id),
-                                        canRemove = draftQtyOf(item.id) > 0,
+                                        qty = qtyOf(item),
+                                        draftQty = draftQtyOf(item),
+                                        canRemove = draftQtyOf(item) > 0,
                                         canAddMore = if (item.isPlatera) (!isCooldownActive() && draftPlaterakQty() < remainingQuota()) else true,
                                         onPlus = { inc(item) },
                                         onMinus = { dec(item) },
@@ -1178,11 +1235,11 @@ fun MenuScreen(
     }
 
     if (showPaymentDialog) {
-        val currentLines = cart.entries.flatMap { (id, qty) ->
-            val item = menu.firstOrNull { it.id == id }
+        val currentLines = cart.entries.flatMap { (cartId, qty) ->
+            val item = menuItemByCartId(cartId)
             List(qty) { _ ->
                 EskaeraLineRequest(
-                    produktuaId = id,
+                    produktuaId = item?.id ?: cartId,
                     izena = item?.name,
                     prezioa = item?.price?.let { if (it < 0) null else it },
                     data = nowIso(),
@@ -1295,13 +1352,14 @@ private fun SidebarItemRow(title: String, selected: Boolean, onClick: () -> Unit
 private fun MenuCard(
     item: MenuItem,
     qty: Int,
+    draftQty: Int,
     canRemove: Boolean,
     canAddMore: Boolean,
     onPlus: () -> Unit,
     onMinus: () -> Unit,
     onImageClick: () -> Unit
 ) {
-    val noMoreBecauseStock = item.stock <= 0 || qty >= item.stock
+    val noMoreBecauseStock = item.stock <= 0 || draftQty >= item.stock
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1312,8 +1370,8 @@ private fun MenuCard(
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
 
             Box(contentAlignment = Alignment.BottomEnd) {
-                Image(
-                    painter = painterResource(id = item.imageRes),
+                MenuItemImage(
+                    item = item,
                     contentDescription = item.name,
                     modifier = Modifier
                         .size(84.dp)
@@ -1414,11 +1472,59 @@ private fun MenuCard(
     }
 }
 
+private fun normalizeImageUrl(raw: String?): String? {
+    val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true)) {
+        return value
+    }
+
+    val clean = value
+        .removePrefix("wwwroot/")
+        .trimStart('/')
+
+    return "${NetworkConfig.apiBaseUrl.trimEnd('/')}/${if (clean.startsWith("irudiak/", ignoreCase = true)) clean else "irudiak/$clean"}"
+}
+
+@Composable
+private fun MenuItemImage(item: MenuItem, contentDescription: String, modifier: Modifier = Modifier) {
+    var bitmap by remember(item.imageUrl) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failed by remember(item.imageUrl) { mutableStateOf(false) }
+
+    LaunchedEffect(item.imageUrl) {
+        bitmap = null
+        failed = false
+        val url = item.imageUrl ?: return@LaunchedEffect
+        runCatching {
+            withContext(Dispatchers.IO) {
+                URL(url).openStream().use { BitmapFactory.decodeStream(it) }
+            }
+        }.onSuccess {
+            bitmap = it
+        }.onFailure {
+            failed = true
+        }
+    }
+
+    if (bitmap != null && !failed) {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = contentDescription,
+            modifier = modifier
+        )
+    } else {
+        Image(
+            painter = painterResource(id = item.imageRes),
+            contentDescription = contentDescription,
+            modifier = modifier
+        )
+    }
+}
+
 @Composable
 private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: List<EskaeraLineRequest>, modifier: Modifier = Modifier, onCancel: (MenuItem) -> Unit) {
     val ordered = remember(menu, cart) {
-        cart.entries.mapNotNull { (id, qty) ->
-            val item = menu.firstOrNull { it.id == id } ?: return@mapNotNull null
+        cart.entries.mapNotNull { (cartId, qty) ->
+            val item = menu.firstOrNull { it.cartId == cartId } ?: return@mapNotNull null
             item to qty
         }.sortedBy { it.first.name }
     }

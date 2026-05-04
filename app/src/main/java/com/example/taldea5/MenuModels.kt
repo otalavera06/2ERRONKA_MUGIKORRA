@@ -6,6 +6,7 @@ enum class MenuSection { Platerak, Edariak, Postreak }
 
 data class MenuItem(
     val id: Int,
+    val cartId: Int,
     val name: String,
     val price: Double,
     val stock: Int,
@@ -13,5 +14,6 @@ data class MenuItem(
     val shortInfo: String,
     val ingredientsText: String,
     @DrawableRes val imageRes: Int,
+    val imageUrl: String? = null,
     val isPlatera: Boolean = false
 )
