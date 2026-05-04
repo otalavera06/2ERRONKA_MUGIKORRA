@@ -574,6 +574,29 @@ fun MenuScreen(
         sharedAccumulated?.addAll(accumulatedOrders)
     }
 
+    LaunchedEffect(mahaiId) {
+        if (mahaiId == null) return@LaunchedEffect
+        while(true) {
+            try {
+                val res = RetrofitClient.api.getZerbitzuakByMahai(mahaiId)
+                if (res.isSuccessful && res.body() != null) {
+                    val zerbList = res.body()!!
+                    val activeZerb = zerbList.firstOrNull { !it.ordainduta }
+                    if (activeZerb != null) {
+                        val externalLines = activeZerb.eskaerak ?: emptyList()
+                        accumulatedOrders.clear()
+                        accumulatedOrders.addAll(externalLines)
+                    } else {
+                        if (accumulatedOrders.isNotEmpty()) {
+                            accumulatedOrders.clear()
+                        }
+                    }
+                }
+            } catch(e: Exception) {}
+            delay(5000)
+        }
+    }
+
     fun committedQtyOf(id: Int) = accumulatedOrders.count { it.produktuaId == id }
     fun draftQtyOf(id: Int) = cart[id] ?: 0
     fun qtyOf(id: Int) = draftQtyOf(id) + committedQtyOf(id)
@@ -583,7 +606,6 @@ fun MenuScreen(
     }
 
     var section by remember { mutableStateOf(MenuSection.Platerak) }
-    var ordersExpanded by remember { mutableStateOf(true) }
 
     var selectedItem by remember { mutableStateOf<MenuItem?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -907,13 +929,13 @@ fun MenuScreen(
         }
     }
 
-    Row(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize().background(BrandBlack)) {
 
         Column(
             modifier = Modifier
                 .width(240.dp)
                 .fillMaxHeight()
-                .background(Color.White)
+                .background(BrandBlack)
                 .border(1.dp, BrandGold.copy(alpha = 0.25f))
                 .padding(12.dp)
         ) {
@@ -922,7 +944,7 @@ fun MenuScreen(
             Text(
                 "Mahaia ${mahaiId ?: "-"}",
                 fontWeight = FontWeight.Bold,
-                color = Color.Black
+                color = BrandIvory
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -945,12 +967,12 @@ fun MenuScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .background(Color.White)
+                .background(BrandBlack)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.White)
+                    .background(BrandBlack)
                     .border(1.dp, BrandGold.copy(alpha = 0.25f))
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -997,22 +1019,20 @@ fun MenuScreen(
                 }) {
                     Text("Txata", color = BrandGold, fontWeight = FontWeight.Bold)
                 }
-
-                Spacer(Modifier.width(8.dp))
-
-                TextButton(onClick = { ordersExpanded = !ordersExpanded }) {
-                    Icon(
-                        imageVector = if (ordersExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null,
-                        tint = BrandGold
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (ordersExpanded) "Eskaerak ezkutatu" else "Eskaerak erakutsi", color = BrandGold)
-                }
             }
 
-            if (ordersExpanded) {
-                OrdersBar(menu = menu, cart = cart, accumulated = accumulatedOrders, modifier = Modifier.fillMaxWidth())
+            OrdersBar(
+                    menu = menu, 
+                    cart = cart, 
+                    accumulated = accumulatedOrders, 
+                    modifier = Modifier.fillMaxWidth(),
+                    onCancel = { item ->
+                        val draftQty = cart[item.id] ?: 0
+                        if (draftQty > 0) {
+                            if (draftQty == 1) cart.remove(item.id) else cart[item.id] = draftQty - 1
+                        }
+                    }
+                )
 
                 val quota = remainingQuota()
                 val active = isCooldownActive()
@@ -1083,7 +1103,7 @@ fun MenuScreen(
                         color = if (it.contains("✅")) SuccessGreen else DangerRed
                     )
                 }
-            }
+            
 
             HorizontalDivider(color = BrandGold.copy(alpha = 0.25f))
 
@@ -1395,7 +1415,7 @@ private fun MenuCard(
 }
 
 @Composable
-private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: List<EskaeraLineRequest>, modifier: Modifier = Modifier) {
+private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: List<EskaeraLineRequest>, modifier: Modifier = Modifier, onCancel: (MenuItem) -> Unit) {
     val ordered = remember(menu, cart) {
         cart.entries.mapNotNull { (id, qty) ->
             val item = menu.firstOrNull { it.id == id } ?: return@mapNotNull null
@@ -1415,7 +1435,7 @@ private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: Li
 
     Column(
         modifier = modifier
-            .background(Color.White)
+            .background(BrandBlack)
             .border(1.dp, BrandGold.copy(alpha = 0.25f))
             .padding(12.dp)
     ) {
@@ -1432,7 +1452,7 @@ private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: Li
         Spacer(Modifier.height(8.dp))
 
         if (ordered.isEmpty() && prevOrdered.isEmpty()) {
-            Text("Oraindik ez dago ezer.", color = Color.Black.copy(alpha = 0.6f))
+            Text("Oraindik ez dago ezer.", color = BrandIvory.copy(alpha = 0.6f))
         } else {
             if (prevOrdered.isNotEmpty()) {
                 Text("Bidalita (Zerbitzarian gordetzeko zain):", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
@@ -1460,8 +1480,17 @@ private fun OrdersBar(menu: List<MenuItem>, cart: Map<Int, Int>, accumulated: Li
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("• ${item.name}", modifier = Modifier.weight(1f))
+                        Text("• ${item.name}", modifier = Modifier.weight(1f), color = BrandIvory)
                         Text("x$qty", fontWeight = FontWeight.SemiBold, color = BrandGold)
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { onCancel(item) },
+                            modifier = Modifier.height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = DangerRed)
+                        ) {
+                            Text("Kendu", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                     Spacer(Modifier.height(4.dp))
                 }

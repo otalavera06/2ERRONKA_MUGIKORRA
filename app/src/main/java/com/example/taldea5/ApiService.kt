@@ -42,7 +42,8 @@ data class EskaeraLineRequest(
     val prezioa: Double?,
     val data: String,
     val egoera: Int,
-    val isPlatera: Boolean = false
+    val isPlatera: Boolean = false,
+    val id: Int? = null
 )
 
 data class ZerbitzuaCreateRequest(
@@ -83,6 +84,14 @@ data class ChatBaimenaResponse(
     val chatBaimena: Boolean
 )
 
+data class ZerbitzuaDto(
+    val id: Int,
+    val prezioTotala: Double?,
+    val data: String?,
+    val ordainduta: Boolean,
+    val eskaerak: List<EskaeraLineRequest>?
+)
+
 interface ApiService {
 
     @POST("api/mahaiak/login")
@@ -99,6 +108,9 @@ interface ApiService {
 
     @POST("api/zerbitzua")
     suspend fun createZerbitzua(@Body body: ZerbitzuaCreateRequest): Response<ZerbitzuaResponse>
+
+    @GET("api/zerbitzua/mahaia/{mahaiaId}")
+    suspend fun getZerbitzuakByMahai(@Path("mahaiaId") mahaiaId: Int): Response<List<ZerbitzuaDto>>
 
     @POST("api/fakturak/{zerbitzuaId}/sortu")
     suspend fun createFaktura(@Path("zerbitzuaId") zerbitzuaId: Int): Response<Unit>
