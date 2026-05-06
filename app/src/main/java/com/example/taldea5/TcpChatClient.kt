@@ -222,7 +222,13 @@ class TcpChatClient(
     }
 
     private fun buildMesaChatMessage(mesaId: Int, mesaName: String, text: String, tipoMezua: String = "TEXT"): String {
-        return "CHAT|MESA|$mesaId|${encode(mesaName)}|${encode(text)}|$tipoMezua"
+        val izenaKodetua = encode(mesaName)
+        val testuKodetua = encode(text)
+        return if (tipoMezua == "TEXT") {
+            "CHAT|MESA|$mesaId|$izenaKodetua|$testuKodetua|TEXT"
+        } else {
+            "CHAT|MESA|$mesaId|$izenaKodetua|$testuKodetua||$tipoMezua"
+        }
     }
 
     private fun buildMesaFileMessage(mesaId: Int, fileName: String, encryptedFileData: String): String {

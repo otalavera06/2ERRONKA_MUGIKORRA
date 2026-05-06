@@ -1,5 +1,6 @@
 package com.example.taldea5
 
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
@@ -7,7 +8,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,7 +15,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,9 +28,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.example.taldea5.ui.theme.BrandBlack
 import com.example.taldea5.ui.theme.BrandGold
 import com.example.taldea5.ui.theme.BrandIvory
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,7 +83,7 @@ fun ChatScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(BrandIvory)
     ) {
         TopAppBar(
             title = {
@@ -124,8 +128,13 @@ fun ChatScreen(
                     fromMe = m.fromMe,
                     text = m.text,
                     tipoMezua = m.tipoMezua,
-                    onClick = {
-                        if (m.tipoMezua == "FILE" && m.fileName != null && m.fileDataBase64 != null) {
+                    onViewFile = {
+                        if (m.fileName != null && m.fileDataBase64 != null) {
+                            openChatFile(context, m.fileName, m.fileDataBase64)
+                        }
+                    },
+                    onDownloadFile = {
+                        if (m.fileName != null && m.fileDataBase64 != null) {
                             saveChatFile(context, m.fileName, m.fileDataBase64)
                         }
                     }
@@ -202,7 +211,7 @@ private fun saveChatFile(context: android.content.Context, fileName: String, bas
         val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
         val dir = context.getExternalFilesDir(null)
         if (dir != null) {
-            val file = java.io.File(dir, fileName)
+            val file = File(dir, fileName)
             file.outputStream().use { it.write(bytes) }
             Toast.makeText(context, "Fitxategia gordeta: ${file.absolutePath}", Toast.LENGTH_LONG).show()
         } else {
@@ -213,20 +222,37 @@ private fun saveChatFile(context: android.content.Context, fileName: String, bas
     }
 }
 
+private fun openChatFile(context: android.content.Context, fileName: String, base64Data: String) {
+    try {
+        val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
+        val dir = File(context.cacheDir, "chat_files").apply { mkdirs() }
+        val file = File(dir, fileName)
+        file.outputStream().use { it.write(bytes) }
+
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Fitxategia ireki"))
+    } catch (_: Exception) {
+        Toast.makeText(context, "Ezin izan da fitxategia ireki", Toast.LENGTH_LONG).show()
+    }
+}
+
 @Composable
 private fun ChatBubble(
     fromMe: Boolean,
     text: String,
     tipoMezua: String,
-    onClick: () -> Unit = {}
+    onViewFile: () -> Unit = {},
+    onDownloadFile: () -> Unit = {}
 ) {
-    val bg = if (fromMe) BrandGold.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.06f)
-    val align = if (fromMe) Alignment.End else Alignment.Start
+    val bg = if (fromMe) BrandGold.copy(alpha = 0.28f) else Color.White
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (fromMe) Arrangement.End else Arrangement.Start) {
-        Box(
+        Column(
             modifier = Modifier
-                .clickable(enabled = tipoMezua == "FILE", onClick = onClick)
                 .clip(RoundedCornerShape(14.dp))
                 .background(bg)
                 .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -234,6 +260,29 @@ private fun ChatBubble(
 
         ) {
             Text(text = text, color = Color.Black)
+            if (tipoMezua == "FILE") {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onViewFile,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandBlack)
+                    ) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Ikusi", fontSize = 12.sp)
+                    }
+                    Button(
+                        onClick = onDownloadFile,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandGold, contentColor = BrandBlack)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Deskargatu", fontSize = 12.sp)
+                    }
+                }
+            }
         }
     }
 }

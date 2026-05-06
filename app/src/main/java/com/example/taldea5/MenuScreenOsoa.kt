@@ -595,30 +595,37 @@ fun MenuScreen(
         sharedAccumulated?.addAll(accumulatedOrders)
     }
 
+    suspend fun refreshAccumulatedOrdersFromServer() {
+        if (mahaiId == null) return
+        try {
+            val res = RetrofitClient.api.getZerbitzuakByMahai(mahaiId)
+            if (res.isSuccessful && res.body() != null) {
+                val zerbList = res.body()!!
+                val activeZerb = zerbList.firstOrNull { !it.ordainduta }
+                if (activeZerb != null) {
+                    val externalLines = activeZerb.eskaerak ?: emptyList()
+                    accumulatedOrders.clear()
+                    accumulatedOrders.addAll(externalLines)
+                } else if (accumulatedOrders.isNotEmpty()) {
+                    accumulatedOrders.clear()
+                }
+            }
+        } catch(e: Exception) {}
+    }
+
     LaunchedEffect(mahaiId) {
         if (mahaiId == null) return@LaunchedEffect
+        refreshAccumulatedOrdersFromServer()
         while(true) {
-            try {
-                val res = RetrofitClient.api.getZerbitzuakByMahai(mahaiId)
-                if (res.isSuccessful && res.body() != null) {
-                    val zerbList = res.body()!!
-                    val activeZerb = zerbList.firstOrNull { !it.ordainduta }
-                    if (activeZerb != null) {
-                        val externalLines = activeZerb.eskaerak ?: emptyList()
-                        accumulatedOrders.clear()
-                        accumulatedOrders.addAll(externalLines)
-                    } else {
-                        if (accumulatedOrders.isNotEmpty()) {
-                            accumulatedOrders.clear()
-                        }
-                    }
-                }
-            } catch(e: Exception) {}
-            delay(5000)
+            refreshAccumulatedOrdersFromServer()
+            delay(1000)
         }
     }
 
     fun sameMenuItem(line: EskaeraLineRequest, item: MenuItem): Boolean {
+        if (line.isPlatera && item.isPlatera) {
+            return normalizeName(line.izena ?: "") == normalizeName(item.name)
+        }
         return line.produktuaId == item.id && line.isPlatera == item.isPlatera
     }
 
@@ -804,6 +811,8 @@ fun MenuScreen(
     fun canPay(): Boolean {
         if (cart.isEmpty() && accumulatedOrders.isEmpty()) return false
         if (cart.isNotEmpty() && !canOrder()) return false
+        if (draftPlaterakQty() > 0) return false
+        if (accumulatedOrders.any { it.isPlatera && it.egoera == 0 }) return false
         return true
     }
 
@@ -862,8 +871,8 @@ fun MenuScreen(
                 cooldownEndAt = nowMs() + cooldownMs
             }
 
-            accumulatedOrders.addAll(lines)
             cart.clear()
+            refreshAccumulatedOrdersFromServer()
             if (!serviceActive) {
                 onServiceStarted()
                 orderMsg = "Zerbitzua $serviceNumber hasi da. Eskaera sukaldera bidali da ✅"
@@ -946,10 +955,12 @@ fun MenuScreen(
                 try {
                     val resFaktura = RetrofitClient.api.createFaktura(zerbitzuaId)
                     if (!resFaktura.isSuccessful) {
-                        println("Errorea faktura sortzean: ${resFaktura.code()}")
+                        orderMsg = eskaeraErrorMessage(resFaktura)
+                        return
                     }
                 } catch (e: Exception) {
-                    println("Errorea faktura deian: ${e.message}")
+                    orderMsg = "Errorea faktura deian: ${e.message}"
+                    return
                 }
 
                 cart.clear()
@@ -984,7 +995,7 @@ fun MenuScreen(
         }
     }
 
-    Row(Modifier.fillMaxSize().background(BrandBlack)) {
+    Row(Modifier.fillMaxSize().background(BrandIvory)) {
 
         Column(
             modifier = Modifier
@@ -1022,7 +1033,7 @@ fun MenuScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .background(BrandBlack)
+                .background(BrandIvory)
         ) {
             Row(
                 modifier = Modifier
@@ -1100,12 +1111,12 @@ fun MenuScreen(
                     Button(
                         onClick = { scope.launch { doOrder() } },
                         enabled = canOrder(),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandGold, contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandGold, contentColor = BrandBlack)
                     ) {
                         if (ordering) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
-                                color = Color.White,
+                                color = BrandBlack,
                                 strokeWidth = 2.dp
                             )
                             Spacer(Modifier.width(10.dp))
@@ -1127,7 +1138,7 @@ fun MenuScreen(
 
                     Text(
                         "Platerak: ${draftPlaterakQty()}/$quota",
-                        color = BrandGold,
+                        color = BrandBlack,
                         fontWeight = FontWeight.SemiBold
                     )
 
@@ -1182,7 +1193,7 @@ fun MenuScreen(
                                             groupTitle,
                                             fontSize = 16.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = BrandGold
+                                            color = BrandBlack
                                         )
                                         Spacer(Modifier.height(6.dp))
                                     }
@@ -1340,11 +1351,15 @@ private fun SidebarItemRow(title: String, selected: Boolean, onClick: () -> Unit
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) BrandGold.copy(alpha = 0.08f) else Color.Transparent)
+            .background(if (selected) BrandGold else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp)
     ) {
-        Text(title, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = BrandGold)
+        Text(
+            title,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) BrandBlack else BrandGold
+        )
     }
 }
 
@@ -1394,7 +1409,7 @@ private fun MenuCard(
             Spacer(Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = BrandGold)
+                Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = BrandBlack)
                 
                 Text(
                     text = item.shortInfo,
@@ -1417,7 +1432,7 @@ private fun MenuCard(
                 Spacer(Modifier.height(4.dp))
 
                 val priceText = if (item.price < 0) "—" else "€%.2f".format(item.price)
-                Text(priceText, color = Color.Black.copy(alpha = 0.65f), fontSize = 13.sp)
+                Text(priceText, color = BrandGold, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
 
                 Spacer(Modifier.height(4.dp))
 
@@ -1444,7 +1459,7 @@ private fun MenuCard(
                 }
 
                 Spacer(Modifier.width(8.dp))
-                Text(qty.toString(), fontWeight = FontWeight.SemiBold, modifier = Modifier.width(22.dp))
+                Text(qty.toString(), fontWeight = FontWeight.SemiBold, color = BrandBlack, modifier = Modifier.width(22.dp))
 
                 Spacer(Modifier.width(8.dp))
 
