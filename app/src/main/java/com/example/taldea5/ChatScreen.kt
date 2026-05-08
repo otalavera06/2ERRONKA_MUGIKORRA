@@ -47,7 +47,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val mesaName = remember(mesaId) { mesaId?.let { "Mahaia $it" } ?: "Mahaia" }
     val client = remember(host, port, mesaId, chatSessionVersion) {
-        TcpChatClient(host, port, mesaId, mesaName)
+        TcpChatClient(host, port, mesaId, mesaName, context.applicationContext)
     }
 
     val connected by client.connected.collectAsState()

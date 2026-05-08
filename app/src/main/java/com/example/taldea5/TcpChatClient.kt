@@ -1,13 +1,19 @@
 package com.example.taldea5
 
+import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.BufferedReader
 import java.io.BufferedWriter
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.Socket
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class ChatMessage(
     val fromMe: Boolean,
@@ -22,9 +28,11 @@ class TcpChatClient(
     private val host: String,
     private val port: Int,
     private val mesaId: Int?,
-    private val mesaName: String
+    private val mesaName: String,
+    context: Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appContext = context.applicationContext
 
     private var socket: Socket? = null
     private var reader: BufferedReader? = null
@@ -205,11 +213,15 @@ class TcpChatClient(
                         }
                     }
                     "EMOJI" -> {
-                        val emoji = decode(parts[4])
+                        val encryptedText = parts[4]
+                        val emoji = decode(encryptedText)
+                        logIncomingChat("Mugikorra", "TPV", encryptedText, emoji, tipoMezua)
                         addMessage(fromMe = false, text = emoji, tipoMezua = "EMOJI")
                     }
                     else -> {
-                        val messageText = decode(parts[4])
+                        val encryptedText = parts[4]
+                        val messageText = decode(encryptedText)
+                        logIncomingChat("Mugikorra", "TPV", encryptedText, messageText, "TEXT")
                         addMessage(fromMe = false, text = messageText, tipoMezua = "TEXT")
                     }
                 }
@@ -224,6 +236,7 @@ class TcpChatClient(
     private fun buildMesaChatMessage(mesaId: Int, mesaName: String, text: String, tipoMezua: String = "TEXT"): String {
         val izenaKodetua = encode(mesaName)
         val testuKodetua = encode(text)
+        logOutgoingChat("Mugikorra", text, testuKodetua, tipoMezua)
         return if (tipoMezua == "TEXT") {
             "CHAT|MESA|$mesaId|$izenaKodetua|$testuKodetua|TEXT"
         } else {
@@ -279,5 +292,45 @@ class TcpChatClient(
             fileDataBase64 = fileDataBase64
         )
     }
-}
 
+    private fun logOutgoingChat(application: String, original: String, encoded: String, messageType: String) {
+        writeChatLog(
+            "[CHAT KODIFIKAZIOA]",
+            "Jatorrizko aplikazioa: $application",
+            "Mezu mota: $messageType",
+            "1. Jatorrizko mezua ($application-tik bidalia): ${cleanForLog(original)}",
+            "2. Mezua kodetuta: ${cleanForLog(encoded)}"
+        )
+    }
+
+    private fun logIncomingChat(receiver: String, sender: String, receivedEncoded: String, decoded: String, messageType: String) {
+        writeChatLog(
+            "[CHAT DESKODIFIKAZIOA]",
+            "Aplikazio hartzailea: $receiver",
+            "Aplikazio remitentea: $sender",
+            "Mezu mota: $messageType",
+            "3. Beste aplikaziora iritsitako mezu kodetua: ${cleanForLog(receivedEncoded)}",
+            "4. Mezua deskodetuta (jatorrizkoaren berdina izan behar du): ${cleanForLog(decoded)}"
+        )
+    }
+
+    private fun writeChatLog(vararg lines: String) {
+        try {
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val entry = buildString {
+                appendLine("===== $timestamp =====")
+                lines.forEach { appendLine(it) }
+                appendLine()
+            }
+
+            File(appContext.filesDir, "chat_codificacion_log.txt").appendText(entry, Charsets.UTF_8)
+            Log.d("ChatCodificacion", entry)
+        } catch (e: Exception) {
+            Log.e("ChatCodificacion", "Errorea chat loga idaztean: ${e.message}")
+        }
+    }
+
+    private fun cleanForLog(value: String): String {
+        return value.replace("\r", "\\r").replace("\n", "\\n")
+    }
+}
